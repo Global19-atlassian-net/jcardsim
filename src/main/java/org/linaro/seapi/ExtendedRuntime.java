@@ -27,13 +27,13 @@
 
 package org.linaro.seapi;
 
+import com.licel.jcardsim.base.ApduCase;
 import com.licel.jcardsim.base.SimulatorRuntime;
+import com.licel.jcardsim.utils.AIDUtil;
 import javacard.framework.*;
 
 import javax.smartcardio.CommandAPDU;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.util.logging.Logger;
 
 public class ExtendedRuntime extends SimulatorRuntime {
@@ -42,17 +42,51 @@ public class ExtendedRuntime extends SimulatorRuntime {
 
     private final List<Channel> channelList = new ArrayList<Channel>();
 
+    /* Record the reference count in a Package (for MultiSelectable Applet) */
+    private Map<Package, Reference> packageReferenceMap = new HashMap<Package, Reference>();
+
+    /* Record the selected Applet (for NonMultiSelectable Applet) */
+    private Map<AID, Applet> selectedAppletMap = new HashMap<AID, Applet>();
+
+    private class Reference {
+        private int ref;
+
+        public Reference() {
+            ref = 0;
+        }
+
+        public int refCount() {
+            return ref;
+        }
+
+        public void addRef() {
+            ref++;
+        }
+
+        public void decRef() {
+            ref--;
+        }
+    }
+
     private interface SELECT {
         static final int CMD = 0xa4;
+
+        /* P1 parameters */
+        static final int SELECT_BY_NAME = 0x04;
+
+        /* P2 parameters */
+        static final int FIRST_OR_ONLY_OCCURENCE = 0x00;
+        static final int NEXT_OCCURENCE = 0x02;
     }
 
     private interface MANAGE_CHANNEL {
         static final int CMD = 0x70;
 
+        /* P1 parameters */
         static final int OPEN_CHANNEL = 0x00;
-
         static final int CLOSE_CHANNEL = 0x80;
 
+        /* P2 parameters */
         static final int OPEN_NEXT_AVAILABLE_CHANNEL = 0x00;
     }
 
@@ -73,7 +107,7 @@ public class ExtendedRuntime extends SimulatorRuntime {
         }
     }
 
-    private void closeChannel(Channel channel) {
+    private void closeChannel(Channel channel) throws CardException {
         channel.close();
         synchronized (channelList) {
             channelList.remove(channel);
@@ -84,12 +118,17 @@ public class ExtendedRuntime extends SimulatorRuntime {
         Iterator<Channel> itr = channelList.iterator();
         while (itr.hasNext()) {
             Channel channel = itr.next();
+            try {
+                deselectApplet(channel.getSelectedAID());
+            } catch (CardException e) {
+                e.printStackTrace();
+            }
             channel.close();
             itr.remove();
         }
     }
 
-    private boolean isChannelManageCmd(CommandAPDU apdu) {
+    private boolean isChannelManagementCmd(CommandAPDU apdu) {
         int ins = apdu.getINS();
         int claChannel = getCLAChannel(apdu);
 
@@ -103,7 +142,7 @@ public class ExtendedRuntime extends SimulatorRuntime {
         return true;
     }
 
-    private byte[] handleChannelManageCmd(CommandAPDU apdu) throws CardException {
+    private byte[] handleChannelManagementCmd(CommandAPDU apdu) throws CardException {
         int ins = apdu.getINS();
 
         if (ins == SELECT.CMD)
@@ -112,8 +151,133 @@ public class ExtendedRuntime extends SimulatorRuntime {
             return handleManageChannel(apdu);
     }
 
-    private byte[] handleSelect(CommandAPDU apdu) {
-        return new byte[2];
+    private void addSelectedApplet(AID aid, Applet applet) {
+        selectedAppletMap.put(aid, applet);
+    }
+
+    private void removeSelectedApplet(AID aid) {
+        selectedAppletMap.remove(aid);
+    }
+
+    private boolean isAppletSelected(AID aid) {
+        if (selectedAppletMap.containsKey(aid))
+            return true;
+
+        return false;
+    }
+
+    private void selectApplet(AID aid, Channel channel) throws CardException {
+        Applet applet;
+
+        /*
+         * Check if the channel already has a selected Applet.
+         * If yes, deselect the Applet
+         * (By default a channel should always have a Applet selected,
+         * but this is for the case that a channel is newly created)
+         */
+        AID channelSelectedAid = channel.getSelectedAID();
+        if (channelSelectedAid != null)
+            deselectApplet(channelSelectedAid);
+
+        channel.setSelectedAID(aid);
+        applet = getApplet(aid);
+
+        MultiSelectable multiSelectable = null;
+        if (applet instanceof MultiSelectable)
+            multiSelectable = (MultiSelectable)applet;
+
+        if (multiSelectable != null) {
+            Package appletPackage = applet.getClass().getPackage();
+            if (packageReferenceMap.containsKey(appletPackage)) {
+                /* Applet(s) in the given package has already been selected */
+                Reference ref = packageReferenceMap.get(appletPackage);
+                ref.addRef();
+                if (!multiSelectable.select(true)) {
+                    throw new CardException(ISO7816.SW_APPLET_SELECT_FAILED);
+                }
+            } else {
+                /* Applet(s) in the given package has not yet been selected */
+                Reference packageReference = new Reference();
+                if (!multiSelectable.select(false)) {
+                    throw new CardException(ISO7816.SW_APPLET_SELECT_FAILED);
+                }
+                packageReference.addRef();
+                packageReferenceMap.put(appletPackage, packageReference);
+            }
+        } else {
+            if (isAppletSelected(aid)) {
+                throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+            }
+
+            if (!applet.select()) {
+                throw new CardException(ISO7816.SW_APPLET_SELECT_FAILED);
+            }
+            addSelectedApplet(aid, applet);
+        }
+    }
+
+    private void deselectApplet(AID aid) throws CardException {
+        Applet applet = getApplet(aid);
+        MultiSelectable multiSelectable = null;
+        if (applet instanceof MultiSelectable)
+            multiSelectable = (MultiSelectable)applet;
+
+        if (multiSelectable != null) {
+            Package appletPackage = applet.getClass().getPackage();
+            if (packageReferenceMap.containsKey(appletPackage)) {
+                Reference ref = packageReferenceMap.get(appletPackage);
+                ref.decRef();
+                if (ref.refCount() > 0) {
+                    multiSelectable.deselect(true);
+                } else {
+                    multiSelectable.deselect(false);
+                    packageReferenceMap.remove(appletPackage);
+                }
+
+            } else {
+                throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+            }
+        } else {
+            if (!isAppletSelected(aid)) {
+                throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+            } else {
+                applet.deselect();
+                removeSelectedApplet(aid);
+            }
+        }
+    }
+
+    private Channel lookupChannel(int channelId) {
+        for (Channel channel : channelList) {
+            if (channel.getChannelId() == channelId)
+                return channel;
+        }
+        return null;
+    }
+
+    private byte[] handleSelect(CommandAPDU apdu) throws CardException {
+        byte[] result = new byte[2];
+        final ApduCase apduCase = ApduCase.getCase(apdu.getBytes());
+        AID newAid;
+        int claChannel = getCLAChannel(apdu);
+        Channel c = lookupChannel(claChannel);
+        if (c == null)
+            throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+
+        int method = apdu.getP1();
+
+        if (method != SELECT.SELECT_BY_NAME)
+            throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+
+        newAid = findAppletForSelectApdu(apdu.getBytes(), apduCase);
+        logger.info(AIDUtil.toString(newAid));
+        if (newAid == null)
+            throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+
+        selectApplet(newAid, c);
+        Util.setShort(result, (short) 0, ISO7816.SW_NO_ERROR);
+
+        return result;
     }
 
     private byte[] handleManageChannel(CommandAPDU apdu) throws CardException {
@@ -126,16 +290,11 @@ public class ExtendedRuntime extends SimulatorRuntime {
         if (claChannel == 0) {
             aid = getAID();
         } else {
-            Channel targetChannel = null;
-            for (Channel channel : channelList) {
-                if (channel.getChannelId() == claChannel) {
-                    targetChannel = channel;
-                }
-            }
-            if (targetChannel == null) {
+            Channel channel = lookupChannel(claChannel);
+            if (channel == null) {
                 throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
             }
-            aid = targetChannel.getSelectedAID();
+            aid = channel.getSelectedAID();
         }
 
         if (aid == null) {
@@ -145,11 +304,20 @@ public class ExtendedRuntime extends SimulatorRuntime {
         if (openFlag == MANAGE_CHANNEL.OPEN_CHANNEL) {
             Channel targetChannel = null;
             if (targetChannelId == MANAGE_CHANNEL.OPEN_NEXT_AVAILABLE_CHANNEL) {
-                targetChannel = Channel.openNextAvailableChannel(aid);
+                targetChannel = Channel.openNextAvailableChannel();
             } else {
-                targetChannel = Channel.openChannel(targetChannelId, aid);
+                targetChannel = Channel.openChannel(targetChannelId);
             }
             addChannel(targetChannel);
+
+            try {
+                selectApplet(aid, targetChannel);
+            } catch (CardException e) {
+                closeChannel(targetChannel);
+                throw e;
+            }
+
+            targetChannel.setSelectedAID(aid);
 
             /* return the allocated channel id */
             result = new byte[3];
@@ -159,10 +327,7 @@ public class ExtendedRuntime extends SimulatorRuntime {
 
         } else if (openFlag == MANAGE_CHANNEL.CLOSE_CHANNEL) {
             Channel targetChannel = null;
-            Iterator<Channel> itr = channelList.iterator();
-            while (itr.hasNext()) {
-                Channel channel = itr.next();
-
+            for (Channel channel : channelList) {
                 if (channel.getChannelId() == targetChannelId) {
                     targetChannel = channel;
                 }
@@ -171,6 +336,8 @@ public class ExtendedRuntime extends SimulatorRuntime {
                 throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
             }
 
+            deselectApplet(targetChannel.getSelectedAID());
+
             closeChannel(targetChannel);
             result = new byte[2];
             Util.setShort(result, (short) 0, ISO7816.SW_NO_ERROR);
@@ -178,6 +345,81 @@ public class ExtendedRuntime extends SimulatorRuntime {
         } else {
             throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
         }
+    }
+
+    class RingIterator<E> implements Iterator<E> {
+        Set<E> set;
+        Iterator<E> itr;
+
+        public RingIterator(Set<E> s) {
+            set = s;
+            itr = s.iterator();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return true;
+        }
+
+        @Override
+        public E next() {
+            if (!itr.hasNext()) {
+                itr = set.iterator();
+            }
+            return itr.next();
+        }
+
+        @Override
+        public void remove() {
+            itr.remove();
+        }
+    }
+
+    @Override
+    protected AID findAppletForSelectApdu(byte[] selectApdu, ApduCase apduCase) {
+        CommandAPDU apdu = new CommandAPDU(selectApdu);
+        int operation_mode = apdu.getP2();
+
+        if (apduCase == ApduCase.Case1 || apduCase == ApduCase.Case2) {
+            // on a regular Smartcard we would select the CardManager applet
+            // in this case we just select the first applet
+            return applets.isEmpty() ? null : applets.firstKey();
+        }
+
+        if (operation_mode == SELECT.FIRST_OR_ONLY_OCCURENCE) {
+            for (AID aid : applets.keySet()) {
+                if (aid.equals(selectApdu, ISO7816.OFFSET_CDATA, selectApdu[ISO7816.OFFSET_LC])) {
+                    return aid;
+                }
+            }
+
+            for (AID aid : applets.keySet()) {
+                if (aid.partialEquals(selectApdu, ISO7816.OFFSET_CDATA, selectApdu[ISO7816.OFFSET_LC])) {
+                    return aid;
+                }
+            }
+        }
+
+        if (operation_mode == SELECT.NEXT_OCCURENCE) {
+            AID currentAid = getAID();
+            byte[] aidBytes = new byte[16];
+            byte length = currentAid.getBytes(aidBytes, (short)0);
+
+            RingIterator<AID> itr = new RingIterator<AID>(applets.keySet());
+            while (itr.hasNext()) {
+                AID aid = itr.next();
+                if (aid.partialEquals(aidBytes, (short)0, length)) {
+                    AID nextAID = itr.next();
+                    if (nextAID == aid) {
+                        return null;
+                    } else {
+                        return nextAID;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     @Override
@@ -191,10 +433,10 @@ public class ExtendedRuntime extends SimulatorRuntime {
     public byte[] transmitCommand(byte[] command) throws SystemException {
         CommandAPDU apdu = new CommandAPDU(command);
 
-        if (isChannelManageCmd(apdu)) {
+        if (isChannelManagementCmd(apdu)) {
             byte[] result;
             try {
-                result = handleChannelManageCmd(apdu);
+                result = handleChannelManagementCmd(apdu);
             } catch (CardException e) {
                 short code = e.getReason();
                 e.printStackTrace();

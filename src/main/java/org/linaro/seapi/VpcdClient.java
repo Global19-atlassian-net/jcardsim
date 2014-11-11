@@ -34,6 +34,8 @@ import com.licel.jcardsim.utils.AIDUtil;
 import javacard.framework.AID;
 import javacard.framework.Applet;
 import javacard.framework.SystemException;
+import org.linaro.seapi.org.linaro.applets.MultiSelectableApplet;
+import org.linaro.seapi.org.linaro.applets.NonMultiSelectableApplet;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -200,13 +202,10 @@ public class VpcdClient extends Simulator {
 
 
         AID appletAID = AIDUtil.create("D0000CAFE00001");
-        client.installApplet(appletAID, HelloWorldApplet.class);
+        client.installApplet(appletAID, MultiSelectableApplet.class);
 
         appletAID = AIDUtil.create("D0000CAFE00002");
-        client.installApplet(appletAID, HelloWorldApplet.class);
-
-        appletAID = AIDUtil.create("D0000CAFE00003");
-        client.installApplet(appletAID, HelloWorldApplet.class);
+        client.installApplet(appletAID, NonMultiSelectableApplet.class);
 
         client.mainLoop();
     }

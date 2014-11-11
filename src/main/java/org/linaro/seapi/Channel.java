@@ -31,9 +31,7 @@ import javacard.framework.AID;
 import javacard.framework.CardException;
 import javacard.framework.ISO7816;
 
-import java.security.InvalidParameterException;
 import java.util.BitSet;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 
@@ -54,9 +52,9 @@ public class Channel {
         channelHandle.set(0);
     }
 
-    public Channel(int channelId, AID selectedAID) {
+    public Channel(int channelId) {
         this.channelId = channelId;
-        this.selectedAID = selectedAID;
+        this.selectedAID = null;
     }
 
     public void close() {
@@ -74,26 +72,22 @@ public class Channel {
         return this.selectedAID;
     }
 
-    static Channel openNextAvailableChannel(AID aid) throws CardException {
-        if (aid == null)
-            throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
+    public void setSelectedAID(AID aid) { this.selectedAID = aid; }
 
+    static Channel openNextAvailableChannel() throws CardException {
         synchronized (channelHandle) {
             int id = channelHandle.nextClearBit(0);
             if (id == MAX_LOGICAL_CHANNEL)
                 throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
 
-            logger.info("logical channel " + id + " opened (" + AIDUtil.toString(aid) + ")");
+            logger.info("logical channel " + id + " opened");
             channelHandle.set(id);
-            return new Channel(id, aid);
+            return new Channel(id);
         }
     }
 
-    static Channel openChannel(int channelId, AID aid) throws CardException {
+    static Channel openChannel(int channelId) throws CardException {
         BitSet openMask = new BitSet(channelId);
-
-        if (aid == null)
-            throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
 
         synchronized (channelHandle) {
             BitSet bs = (BitSet)channelHandle.clone();
@@ -102,9 +96,9 @@ public class Channel {
                 throw new CardException(ISO7816.SW_FUNC_NOT_SUPPORTED);
             }
 
-            logger.info("logical channel " + channelId + " opened (" + AIDUtil.toString(aid) + ")");
+            logger.info("logical channel " + channelId + " opened");
             channelHandle.set(channelId);
-            return new Channel(channelId, aid);
+            return new Channel(channelId);
         }
     }
 }
