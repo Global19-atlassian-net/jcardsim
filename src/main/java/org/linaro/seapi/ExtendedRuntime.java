@@ -169,17 +169,6 @@ public class ExtendedRuntime extends SimulatorRuntime {
     private void selectApplet(AID aid, Channel channel) throws CardException {
         Applet applet;
 
-        /*
-         * Check if the channel already has a selected Applet.
-         * If yes, deselect the Applet
-         * (By default a channel should always have a Applet selected,
-         * but this is for the case that a channel is newly created)
-         */
-        AID channelSelectedAid = channel.getSelectedAID();
-        if (channelSelectedAid != null)
-            deselectApplet(channelSelectedAid);
-
-        channel.setSelectedAID(aid);
         applet = getApplet(aid);
 
         MultiSelectable multiSelectable = null;
@@ -214,6 +203,18 @@ public class ExtendedRuntime extends SimulatorRuntime {
             }
             addSelectedApplet(aid, applet);
         }
+
+        /*
+         * Check if the channel already has a selected Applet.
+         * If yes, deselect the old Applet
+         * (By default a channel should always have a Applet selected,
+         * but this is for the case that a channel is newly created)
+         */
+        AID channelSelectedAid = channel.getSelectedAID();
+        if (channelSelectedAid != null)
+            deselectApplet(channelSelectedAid);
+
+        channel.setSelectedAID(aid);
     }
 
     private void deselectApplet(AID aid) throws CardException {
@@ -270,7 +271,6 @@ public class ExtendedRuntime extends SimulatorRuntime {
             throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
         newAid = findAppletForSelectApdu(apdu.getBytes(), apduCase);
-        logger.info(AIDUtil.toString(newAid));
         if (newAid == null)
             throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
 
