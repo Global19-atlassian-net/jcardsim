@@ -48,6 +48,8 @@ public class ExtendedRuntime extends SimulatorRuntime {
     /* Record the selected Applet (for NonMultiSelectable Applet) */
     private Map<AID, Applet> selectedAppletMap = new HashMap<AID, Applet>();
 
+    private CommandAPDU partialSelectApdu = null;
+
     private class Reference {
         private int ref;
 
@@ -140,6 +142,46 @@ public class ExtendedRuntime extends SimulatorRuntime {
             return false;
 
         return true;
+    }
+
+    private boolean isCommandTargetingToLogicalChannel(CommandAPDU apdu) {
+        int claChannel = getCLAChannel(apdu);
+
+        if (claChannel != 0)
+            return true;
+        else
+            return false;
+    }
+
+    private byte[] transportCommandToLogicalChannel(CommandAPDU apdu) throws CardException {
+        int claChannel = getCLAChannel(apdu);
+        Channel channel;
+
+        channel = lookupChannel(claChannel);
+        if (channel == null)
+            throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+        AID aid = channel.getSelectedAID();
+        Applet applet = getApplet(aid);
+
+        byte[] theSW = new byte[2];
+        APDU appApdu = getCurrentAPDU();
+        try {
+            byte[] command = apdu.getData();
+
+            resetAPDU(appApdu, command);
+            applet.process(appApdu);
+
+            Util.setShort(theSW, (short) 0, (short) 0x9000);
+        } catch (Throwable e) {
+            Util.setShort(theSW, (short) 0, ISO7816.SW_UNKNOWN);
+            if (e instanceof CardRuntimeException) {
+                Util.setShort(theSW, (short) 0, ((CardRuntimeException) e).getReason());
+            }
+        }
+        finally {
+            resetAPDU(appApdu, null);
+        }
+        return theSW;
     }
 
     private byte[] handleChannelManagementCmd(CommandAPDU apdu) throws CardException {
@@ -272,7 +314,7 @@ public class ExtendedRuntime extends SimulatorRuntime {
 
         newAid = findAppletForSelectApdu(apdu.getBytes(), apduCase);
         if (newAid == null)
-            throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
+            throw new CardException(ISO7816.SW_RECORD_NOT_FOUND);
 
         selectApplet(newAid, c);
         Util.setShort(result, (short) 0, ISO7816.SW_NO_ERROR);
@@ -378,42 +420,56 @@ public class ExtendedRuntime extends SimulatorRuntime {
     @Override
     protected AID findAppletForSelectApdu(byte[] selectApdu, ApduCase apduCase) {
         CommandAPDU apdu = new CommandAPDU(selectApdu);
-        int operation_mode = apdu.getP2();
 
-        if (apduCase == ApduCase.Case1 || apduCase == ApduCase.Case2) {
-            // on a regular Smartcard we would select the CardManager applet
-            // in this case we just select the first applet
-            return applets.isEmpty() ? null : applets.firstKey();
-        }
+        int operation_mode = apdu.getP2();
 
         if (operation_mode == SELECT.FIRST_OR_ONLY_OCCURENCE) {
             for (AID aid : applets.keySet()) {
                 if (aid.equals(selectApdu, ISO7816.OFFSET_CDATA, selectApdu[ISO7816.OFFSET_LC])) {
+                    partialSelectApdu = null;
                     return aid;
                 }
             }
 
             for (AID aid : applets.keySet()) {
                 if (aid.partialEquals(selectApdu, ISO7816.OFFSET_CDATA, selectApdu[ISO7816.OFFSET_LC])) {
+                    partialSelectApdu = apdu;
                     return aid;
                 }
             }
         }
 
-        if (operation_mode == SELECT.NEXT_OCCURENCE) {
-            AID currentAid = getAID();
+        if (partialSelectApdu != null && operation_mode == SELECT.NEXT_OCCURENCE) {
+            AID currentAid;
+
+            int claChannel = getCLAChannel(apdu);
+            if (claChannel != 0) {
+                Channel c = lookupChannel(claChannel);
+                currentAid = c.getSelectedAID();
+            } else {
+                currentAid = getAID();
+            }
+
             byte[] aidBytes = new byte[16];
             byte length = currentAid.getBytes(aidBytes, (short)0);
+            byte partialSelectApduBytes[] = partialSelectApdu.getBytes();
 
             RingIterator<AID> itr = new RingIterator<AID>(applets.keySet());
+
             while (itr.hasNext()) {
                 AID aid = itr.next();
-                if (aid.partialEquals(aidBytes, (short)0, length)) {
+
+                /* find the offset of current selected AID in the Applet list */
+                if (aid.equals(aidBytes, (short)0, length)) {
                     AID nextAID = itr.next();
-                    if (nextAID == aid) {
-                        return null;
-                    } else {
-                        return nextAID;
+
+                    /* find the next AID that partially matches the partialSelect AID */
+                    while (nextAID != currentAid) {
+                        if (nextAID.partialEquals(partialSelectApduBytes, ISO7816.OFFSET_CDATA,
+                                partialSelectApduBytes[ISO7816.OFFSET_LC])) {
+                            return nextAID;
+                        }
+                        nextAID = itr.next();
                     }
                 }
             }
@@ -437,6 +493,19 @@ public class ExtendedRuntime extends SimulatorRuntime {
             byte[] result;
             try {
                 result = handleChannelManagementCmd(apdu);
+            } catch (CardException e) {
+                short code = e.getReason();
+                e.printStackTrace();
+                result = new byte[2];
+                Util.setShort(result, (short) 0, code);
+            }
+            return result;
+        }
+
+        if (isCommandTargetingToLogicalChannel(apdu)) {
+            byte[] result;
+            try {
+                result = transportCommandToLogicalChannel(apdu);
             } catch (CardException e) {
                 short code = e.getReason();
                 e.printStackTrace();
