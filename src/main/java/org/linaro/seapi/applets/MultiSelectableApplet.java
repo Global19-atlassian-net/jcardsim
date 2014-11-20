@@ -1,4 +1,4 @@
-package org.linaro.seapi.org.linaro.applets;
+package org.linaro.seapi.applets;
 
 import javacard.framework.APDU;
 import javacard.framework.Applet;

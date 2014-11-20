@@ -29,13 +29,12 @@ package org.linaro.seapi;
 
 import com.licel.jcardsim.base.Simulator;
 import com.licel.jcardsim.base.SimulatorRuntime;
-import com.licel.jcardsim.samples.HelloWorldApplet;
 import com.licel.jcardsim.utils.AIDUtil;
 import javacard.framework.AID;
 import javacard.framework.Applet;
 import javacard.framework.SystemException;
-import org.linaro.seapi.org.linaro.applets.MultiSelectableApplet;
-import org.linaro.seapi.org.linaro.applets.NonMultiSelectableApplet;
+import org.linaro.seapi.applets.MultiSelectableApplet;
+import org.linaro.seapi.applets.NonMultiSelectableApplet;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;

@@ -1,6 +1,5 @@
-package org.linaro.seapi.org.linaro.applets;
+package org.linaro.seapi.applets;
 
-import javacard.framework.AID;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacard.framework.ISOException;
@@ -52,6 +51,6 @@ public class NonMultiSelectableApplet extends Applet {
 
         apdu.setOutgoingLength((short)myAID.length);
 
-        apdu.sendBytesLong(myAID, (short)0, (short)myAID.length);
+        apdu.sendBytesLong(myAID, (short) 0, (short) myAID.length);
     }
 }
