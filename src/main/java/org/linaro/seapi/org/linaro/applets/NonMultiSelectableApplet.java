@@ -1,5 +1,6 @@
 package org.linaro.seapi.org.linaro.applets;
 
+import javacard.framework.AID;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacard.framework.ISOException;
@@ -33,11 +34,24 @@ public class NonMultiSelectableApplet extends Applet {
 
     @Override
     public void deselect() {
-        logger.info("selected");
+        logger.info("deselected");
         super.deselect();
     }
 
     @Override
     public void process(APDU apdu) throws ISOException {
+        // good practice
+        if(selectingApplet()) return;
+
+        logger.info("process");
+        byte[] myAID = new byte[]{
+            (byte)0xD0, (byte)0x00, (byte)0x0C, (byte)0xAF, (byte)0xE0, (byte)0x00, (byte)0x02,
+        };
+
+        apdu.setOutgoing();
+
+        apdu.setOutgoingLength((short)myAID.length);
+
+        apdu.sendBytesLong(myAID, (short)0, (short)myAID.length);
     }
 }

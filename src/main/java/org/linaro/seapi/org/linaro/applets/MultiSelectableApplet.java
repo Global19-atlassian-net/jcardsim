@@ -16,7 +16,19 @@ public class MultiSelectableApplet extends Applet implements MultiSelectable{
 
     @Override
     public void process(APDU apdu) throws ISOException {
+        // good practice
+        if(selectingApplet()) return;
 
+        logger.info("process");
+        byte[] myAID = new byte[]{
+                (byte)0xD0, (byte)0x00, (byte)0x0C, (byte)0xAF, (byte)0xE0, (byte)0x00, (byte)0x01,
+        };
+
+        apdu.setOutgoing();
+
+        apdu.setOutgoingLength((short)myAID.length);
+
+        apdu.sendBytesLong(myAID, (short)0, (short)myAID.length);
     }
 
     /**

@@ -162,16 +162,17 @@ public class ExtendedRuntime extends SimulatorRuntime {
             throw new CardException(ISO7816.SW_COMMAND_NOT_ALLOWED);
         AID aid = channel.getSelectedAID();
         Applet applet = getApplet(aid);
+        logger.info("target aid: " + AIDUtil.toString(aid));
 
         byte[] theSW = new byte[2];
+        responseBufferSize = 0;
         APDU appApdu = getCurrentAPDU();
         try {
             byte[] command = apdu.getData();
 
             resetAPDU(appApdu, command);
             applet.process(appApdu);
-
-            Util.setShort(theSW, (short) 0, (short) 0x9000);
+            Util.setShort(theSW, (short)0, (short) 0x9000);
         } catch (Throwable e) {
             Util.setShort(theSW, (short) 0, ISO7816.SW_UNKNOWN);
             if (e instanceof CardRuntimeException) {
@@ -181,7 +182,19 @@ public class ExtendedRuntime extends SimulatorRuntime {
         finally {
             resetAPDU(appApdu, null);
         }
-        return theSW;
+
+        // if theSW = 0x61XX or 0x9XYZ than return data (ISO7816-3)
+        byte[] response;
+        if(theSW[0] == 0x61 || (theSW[0] >= (byte)0x90 && theSW[0]<=0x9F)) {
+            response = new byte[responseBufferSize + 2];
+            Util.arrayCopyNonAtomic(responseBuffer, (short) 0, response, (short) 0, responseBufferSize);
+            Util.arrayCopyNonAtomic(theSW, (short) 0, response, responseBufferSize, (short) 2);
+        }
+        else {
+            response = theSW;
+        }
+
+        return response;
     }
 
     private byte[] handleChannelManagementCmd(CommandAPDU apdu) throws CardException {
