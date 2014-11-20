@@ -235,10 +235,10 @@ public class ExtendedRuntime extends SimulatorRuntime {
             if (packageReferenceMap.containsKey(appletPackage)) {
                 /* Applet(s) in the given package has already been selected */
                 Reference ref = packageReferenceMap.get(appletPackage);
-                ref.addRef();
                 if (!multiSelectable.select(true)) {
                     throw new CardException(ISO7816.SW_APPLET_SELECT_FAILED);
                 }
+                ref.addRef();
             } else {
                 /* Applet(s) in the given package has not yet been selected */
                 Reference packageReference = new Reference();
